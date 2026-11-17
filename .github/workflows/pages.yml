@@ -30,13 +30,14 @@ jobs:
           mkdir -p _site/Build
           base="https://files.crazygames.com/fragen/224"
           curl --compressed -fsSL "$base/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js" -o _site/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js
-          curl -fsSL "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o _site/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js
+          curl -fsSL "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o /tmp/fragen.framework.js.br
           curl -fsSL "$base/Build/94dd788a9a422297e16b42770ede9a4f.wasm.br" -o /tmp/fragen.wasm.br
           curl -fsSL "$base/Build/9d925cb3a83f24e6325c2c545c2262d2.data.br" -o /tmp/fragen.data.br
           node - <<'NODE'
           const fs = require('fs');
           const zlib = require('zlib');
           for (const [src, out] of [
+            ['/tmp/fragen.framework.js.br', '_site/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js'],
             ['/tmp/fragen.wasm.br', '_site/Build/94dd788a9a422297e16b42770ede9a4f.wasm'],
             ['/tmp/fragen.data.br', '_site/Build/9d925cb3a83f24e6325c2c545c2262d2.data']
           ]) {
