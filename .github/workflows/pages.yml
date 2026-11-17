@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p _site/Build
+          mkdir -p _site/Build _site/StreamingAssets/aa/WebGL
           base="https://files.crazygames.com/fragen/224"
           curl --compressed -fsSL "$base/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js" -o _site/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js
           curl -fsSL "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o /tmp/fragen.framework.js.br
@@ -45,6 +45,32 @@ jobs:
           }
           NODE
           cp index.html _site/index.html
+
+      - name: Mirror addressables content
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://files.crazygames.com/fragen/224/StreamingAssets/aa"
+          out="_site/StreamingAssets/aa"
+          curl --compressed -fsSL "$base/settings.json" -o "$out/settings.json"
+          curl --compressed -fsSL "$base/catalog.bin" -o "$out/catalog.bin"
+          curl --compressed -fsSL "$base/catalog.hash" -o "$out/catalog.hash"
+          node - <<'NODE' > /tmp/bundles.txt
+          const fs = require('fs');
+          const text = fs.readFileSync('_site/StreamingAssets/aa/catalog.bin', 'latin1');
+          const names = [...new Set(text.match(/[A-Za-z0-9_.\-]+_[0-9a-f]{32}\.bundle/g) || [])];
+          if (names.length < 100) {
+            console.error('Only found ' + names.length + ' bundle names in catalog.bin');
+            process.exit(1);
+          }
+          console.log(names.join('\n'));
+          NODE
+          export base
+          (cd "$out/WebGL" && xargs -a /tmp/bundles.txt -P 16 -I{} curl -fsSL "$base/WebGL/{}" -o "{}")
+          expected=$(grep -c . /tmp/bundles.txt)
+          actual=$(ls "$out/WebGL" | wc -l | tr -d ' ')
+          echo "bundles expected=$expected downloaded=$actual"
+          test "$expected" = "$actual"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

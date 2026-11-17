@@ -12,13 +12,16 @@
   body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #f9faff; }
   #game-shell { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, #231844 0, #090c15 68%); }
   #unity-canvas { display: block; width: 100%; height: 100%; outline: none; background: #090c15; }
-  #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: linear-gradient(180deg,#090c15 0%,#16143c 50%,#452a65 100%); z-index: 2; transition: opacity .35s ease; }
+  #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: linear-gradient(180deg,#090c15 0%,#16143c 50%,#452a65 100%); z-index: 2; transition: opacity .35s ease; }
   #loading.hidden { opacity: 0; pointer-events: none; }
   .brand { font-weight: 900; font-size: clamp(34px, 7vw, 76px); letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 0 30px rgba(172, 122, 255, .55); }
   .tagline { color: #b8afd8; font-size: 12px; letter-spacing: .22em; text-transform: uppercase; }
   .bar-wrap { width: min(320px, 70vw); height: 5px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
-  #bar { width: 0%; height: 100%; background: linear-gradient(90deg,#8b5cf6,#f0abfc); transition: width .2s ease; }
-  #status { min-height: 16px; color: #cfc6e9; font-size: 11px; letter-spacing: .08em; }
+  #bar { width: 0%; height: 100%; background: linear-gradient(90deg,#8b5cf6,#f0abfc); transition: width .25s ease; }
+  #loading.busy #bar { animation: breathe 1.4s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+  #status { min-height: 16px; color: #cfc6e9; font-size: 12px; letter-spacing: .06em; }
+  #meta { min-height: 15px; color: #8f86ad; font-size: 11px; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
   #error { display: none; max-width: 560px; padding: 0 24px; color: #fecdd3; font-size: 13px; line-height: 1.6; text-align: center; }
 </style>
 </head>
@@ -30,6 +33,7 @@
     <div class="tagline">Survive. Dominate.</div>
     <div class="bar-wrap"><div id="bar"></div></div>
     <div id="status">Loading game files…</div>
+    <div id="meta"></div>
     <div id="error"></div>
   </div>
 </div>
@@ -83,11 +87,31 @@
     }
   };
 
+  // The real SDK only works inside the crazygames.com portal frame: its init() never resolves
+  // anywhere else and would leave the game stuck on the startup screen, so keep the local SDK
+  // and make sure the remote script is never fetched.
   window.CrazyGames = { SDK: SDK };
+
+  var BLOCKED = 'sdk.crazygames.com';
+  var srcDescriptor = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+  if (srcDescriptor && srcDescriptor.set) {
+    Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+      configurable: true,
+      get: function () { return srcDescriptor.get.call(this); },
+      set: function (value) {
+        if (String(value).indexOf(BLOCKED) !== -1) {
+          // Empty script: it still fires its load event, which is what the engine's bridge waits for.
+          srcDescriptor.set.call(this, 'data:text/javascript;charset=utf-8,');
+          return;
+        }
+        srcDescriptor.set.call(this, value);
+      }
+    });
+  }
 
   var appendChild = Node.prototype.appendChild;
   Node.prototype.appendChild = function (node) {
-    if (node && node.tagName === 'SCRIPT' && node.src && node.src.indexOf('sdk.crazygames.com') !== -1) {
+    if (node && node.tagName === 'SCRIPT' && node.src && node.src.indexOf(BLOCKED) !== -1) {
       node.removeAttribute('src');
       var out = appendChild.call(this, node);
       setTimeout(function () { node.dispatchEvent(new Event('load')); }, 0);
@@ -98,39 +122,176 @@
 })();
 
 </script>
-<script src="Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js?v=20261117b"></script>
+<script src="Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js?v=20261118a"></script>
 <script>
 (function () {
+  var VERSION = '20261118a';
+  var dataUrl = 'Build/9d925cb3a83f24e6325c2c545c2262d2.data?v=' + VERSION;
+  var frameworkUrl = 'Build/f4309c9912d461a9f12b3da028abb1ba.framework.js?v=' + VERSION;
+  var codeUrl = 'Build/94dd788a9a422297e16b42770ede9a4f.wasm?v=' + VERSION;
+
+  // Raw and gzip-compressed byte counts for this build. Used only to turn download byte counts
+  // into a readable MB / speed / ETA figure; a response's own Content-Length wins when present.
+  var SIZES = {
+    '.data': { raw: 19254323, wire: 10902400 },
+    '.wasm': { raw: 32074265, wire: 10913972 }
+  };
+
   var canvas = document.getElementById('unity-canvas');
   var loading = document.getElementById('loading');
   var bar = document.getElementById('bar');
-  var status = document.getElementById('status');
-  var error = document.getElementById('error');
+  var statusEl = document.getElementById('status');
+  var metaEl = document.getElementById('meta');
+  var errorEl = document.getElementById('error');
+
+  var totalWire = SIZES['.data'].wire + SIZES['.wasm'].wire;
+  var files = {};
+  var samples = [];
+  var lastBytes = 0;
+  var finished = false;
+  var unityProgress = 0;
+  var cachedBefore = false;
+  try { cachedBefore = localStorage.getItem('fragen.build') === VERSION; } catch (e) {}
+
+  function classify(url) {
+    var m = String(url).match(/\.(data|wasm)(\?|$)/);
+    return m ? '.' + m[1] : null;
+  }
+
+  // Count bytes as the engine downloads them. We only observe (a cloned stream is drained and
+  // discarded); the response the loader receives is untouched, so no extra request is made.
+  var nativeFetch = window.fetch;
+  if (nativeFetch) {
+    window.fetch = function (input) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var kind = classify(url);
+      var pending = nativeFetch.apply(this, arguments);
+      if (!kind) return pending;
+      return pending.then(function (response) {
+        try {
+          if (!response || !response.ok || !response.body || !response.clone) return response;
+          var st = files[kind] || (files[kind] = { raw: 0 });
+          var reader = response.clone().body.getReader();
+          (function pump() {
+            reader.read().then(function (chunk) {
+              if (chunk.done) return;
+              st.raw += chunk.value.byteLength;
+              pump();
+            }).catch(function () {});
+          })();
+        } catch (e) {}
+        return response;
+      });
+    };
+  }
+
+  function wireLoaded() {
+    var sum = 0;
+    for (var kind in files) {
+      var size = SIZES[kind];
+      if (!size) continue;
+      sum += Math.min(size.wire, size.wire * (files[kind].raw / size.raw));
+    }
+    return sum;
+  }
+
+  function megabytes(bytes) { return (bytes / 1048576).toFixed(1) + ' MB'; }
+
+  function speed() {
+    var now = Date.now();
+    var loaded = wireLoaded();
+    samples.push({ t: now, b: loaded });
+    while (samples.length > 2 && now - samples[0].t > 4000) samples.shift();
+    var first = samples[0];
+    var seconds = (now - first.t) / 1000;
+    return seconds > 0.6 ? (loaded - first.b) / seconds : 0;
+  }
+
+  function etaText(loaded, rate) {
+    if (rate < 2048) return '';
+    var remaining = (totalWire - loaded) / rate;
+    if (remaining < 1) return '';
+    if (remaining < 60) return '~' + Math.max(1, Math.round(remaining)) + 's left';
+    return '~' + Math.round(remaining / 60) + ' min left';
+  }
+
+  function render() {
+    if (finished) return;
+    var loaded = wireLoaded();
+    var rate = speed();
+    var moving = loaded > lastBytes + 1;
+    lastBytes = loaded;
+    var downloadPct = Math.min(100, Math.round((loaded / totalWire) * 100));
+    var pct = Math.max(downloadPct, Math.round(unityProgress * 100));
+
+    bar.style.width = Math.max(pct, 1) + '%';
+
+    if (rate > 0 && moving && pct < 100) {
+      loading.classList.remove('busy');
+      statusEl.textContent = 'Downloading game files… ' + downloadPct + '%';
+      var bits = [megabytes(loaded) + ' of ' + megabytes(totalWire), megabytes(rate) + '/s'];
+      var eta = etaText(loaded, rate);
+      if (eta) bits.push(eta);
+      bits.push('first visit only');
+      metaEl.textContent = bits.join(' · ');
+    } else if (pct >= 100 || loaded >= totalWire - 1024) {
+      loading.classList.add('busy');
+      statusEl.textContent = 'Starting the game…';
+      metaEl.textContent = 'Preparing the engine, this can take a few seconds';
+    } else if (cachedBefore && loaded === 0) {
+      loading.classList.add('busy');
+      statusEl.textContent = 'Loading from your cached copy…';
+      metaEl.textContent = '';
+    } else {
+      loading.classList.add('busy');
+      statusEl.textContent = 'Starting the game…';
+      metaEl.textContent = 'Reading the downloaded files';
+    }
+  }
+
+  var ticker = setInterval(render, 250);
+  render();
+
   function fail(message) {
+    clearInterval(ticker);
     console.error(message);
     loading.classList.remove('hidden');
-    status.textContent = 'Could not start the game.';
-    error.style.display = 'block';
-    error.textContent = message;
+    loading.classList.remove('busy');
+    statusEl.textContent = 'Could not start the game.';
+    metaEl.textContent = 'Reload the page to try again.';
+    errorEl.style.display = 'block';
+    errorEl.textContent = message;
   }
+
   if (typeof createUnityInstance !== 'function') {
     fail('Game loader did not initialize.');
     return;
   }
+
   createUnityInstance(canvas, {
-    dataUrl: 'Build/9d925cb3a83f24e6325c2c545c2262d2.data?v=20261117b',
-    frameworkUrl: 'Build/f4309c9912d461a9f12b3da028abb1ba.framework.js?v=20261117b',
-    codeUrl: 'Build/94dd788a9a422297e16b42770ede9a4f.wasm?v=20261117b',
+    dataUrl: dataUrl,
+    frameworkUrl: frameworkUrl,
+    codeUrl: codeUrl,
     streamingAssetsUrl: 'StreamingAssets',
     companyName: 'Lucky Try',
     productName: 'Fragen',
-    productVersion: '1.0'
+    productVersion: '1.0',
+    // Keep the build in the engine's IndexedDB cache instead of re-downloading ~21 MB on every
+    // visit. The file names are content-hashed and the ?v= tag changes with each deploy, so a
+    // cached copy can never go stale.
+    cacheControl: function (url) {
+      return /\/Build\//.test(String(url)) ? 'immutable' : 'must-revalidate';
+    }
   }, function (progress) {
-    var pct = Math.round(progress * 100);
-    bar.style.width = pct + '%';
-    status.textContent = 'Loading game files… ' + pct + '%';
+    if (typeof progress === 'number' && progress > unityProgress) unityProgress = progress;
+    render();
   }).then(function (instance) {
     window.unityInstance = instance;
+    finished = true;
+    clearInterval(ticker);
+    try { localStorage.setItem('fragen.build', VERSION); } catch (e) {}
+    bar.style.width = '100%';
+    loading.classList.remove('busy');
     loading.classList.add('hidden');
     setTimeout(function () { loading.remove(); }, 400);
   }).catch(function (e) {
