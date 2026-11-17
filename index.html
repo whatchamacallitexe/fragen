@@ -130,8 +130,8 @@
   var frameworkUrl = 'Build/f4309c9912d461a9f12b3da028abb1ba.framework.js?v=' + VERSION;
   var codeUrl = 'Build/94dd788a9a422297e16b42770ede9a4f.wasm?v=' + VERSION;
 
-  // Raw and gzip-compressed byte counts for this build. Used only to turn download byte counts
-  // into a readable MB / speed / ETA figure; a response's own Content-Length wins when present.
+  // Raw sizes plus the usual compressed size of this build. They only turn observed byte counts
+  // into a readable MB / speed / ETA figure; a response's own Content-Length replaces the guess.
   var SIZES = {
     '.data': { raw: 19254323, wire: 10902400 },
     '.wasm': { raw: 32074265, wire: 10913972 }
@@ -144,8 +144,8 @@
   var metaEl = document.getElementById('meta');
   var errorEl = document.getElementById('error');
 
-  var totalWire = SIZES['.data'].wire + SIZES['.wasm'].wire;
   var files = {};
+  var totalWire = 0;
   var samples = [];
   var lastBytes = 0;
   var finished = false;
@@ -157,6 +157,14 @@
     var m = String(url).match(/\.(data|wasm)(\?|$)/);
     return m ? '.' + m[1] : null;
   }
+
+  function recalcTotal() {
+    totalWire = 0;
+    for (var kind in SIZES) {
+      totalWire += (files[kind] && files[kind].wire) || SIZES[kind].wire;
+    }
+  }
+  recalcTotal();
 
   // Count bytes as the engine downloads them. We only observe (a cloned stream is drained and
   // discarded); the response the loader receives is untouched, so no extra request is made.
@@ -170,7 +178,9 @@
       return pending.then(function (response) {
         try {
           if (!response || !response.ok || !response.body || !response.clone) return response;
-          var st = files[kind] || (files[kind] = { raw: 0 });
+          var st = files[kind] || (files[kind] = { raw: 0, wire: 0 });
+          var length = Number(response.headers.get('content-length'));
+          if (length > 0 && length !== st.wire) { st.wire = length; recalcTotal(); }
           var reader = response.clone().body.getReader();
           (function pump() {
             reader.read().then(function (chunk) {
@@ -190,7 +200,8 @@
     for (var kind in files) {
       var size = SIZES[kind];
       if (!size) continue;
-      sum += Math.min(size.wire, size.wire * (files[kind].raw / size.raw));
+      var wire = files[kind].wire || size.wire;
+      sum += Math.min(wire, wire * (files[kind].raw / size.raw));
     }
     return sum;
   }
