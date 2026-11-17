@@ -33,6 +33,71 @@
     <div id="error"></div>
   </div>
 </div>
+<script>
+(function () {
+  if (window.__cgSdkStub) return;
+  window.__cgSdkStub = true;
+
+  var noop = function () {};
+  var resolved = function () { return Promise.resolve(); };
+
+  var SDK = {
+    environment: 'disabled',
+    init: resolved,
+    game: {
+      settings: {},
+      gameplayStart: noop,
+      gameplayStop: resolved,
+      clearGameContext: noop,
+      addSettingsChangeListener: noop,
+      inviteLink: function () { return Promise.resolve(''); },
+      showInviteButton: noop,
+      hideInviteButton: noop
+    },
+    user: {
+      isUserAccountAvailable: false,
+      addScore: noop,
+      getUser: function () { return Promise.resolve(null); },
+      showAuthPrompt: function () { return Promise.resolve(null); },
+      addAuthListener: noop
+    },
+    data: {
+      getItem: function () { return null; },
+      setItem: noop,
+      removeItem: noop,
+      clear: noop
+    },
+    ad: {
+      hasAdblock: function () { return Promise.resolve(false); },
+      addAdblockPopupListener: noop,
+      requestAd: function (type, callbacks) {
+        if (callbacks && callbacks.adFinished) callbacks.adFinished();
+      }
+    },
+    analytics: { trackOrder: noop },
+    banner: {
+      requestBanner: noop,
+      requestResponsiveBanner: noop,
+      clearBanner: noop,
+      clearAllBanners: noop
+    }
+  };
+
+  window.CrazyGames = { SDK: SDK };
+
+  var appendChild = Node.prototype.appendChild;
+  Node.prototype.appendChild = function (node) {
+    if (node && node.tagName === 'SCRIPT' && node.src && node.src.indexOf('sdk.crazygames.com') !== -1) {
+      node.removeAttribute('src');
+      var out = appendChild.call(this, node);
+      setTimeout(function () { node.dispatchEvent(new Event('load')); }, 0);
+      return out;
+    }
+    return appendChild.call(this, node);
+  };
+})();
+
+</script>
 <script src="Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js?v=20261117b"></script>
 <script>
 (function () {
