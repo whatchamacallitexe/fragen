@@ -124,11 +124,10 @@
   // "[BuildCheck] Step started: <name> (<number>)" line so the page can tell when it stalls.
   var steps = window.__fragenSteps = { count: 0, last: 0, name: '', number: 0 };
   var STALL_STEP = /\[BuildCheck\] Step started: (.+?) \((\d+)\)/;
-  var nativeLog = console.log;
-  console.log = function () {
+
+  function recordStep(args) {
     try {
-      var line = Array.prototype.join.call(arguments, ' ');
-      var match = STALL_STEP.exec(line);
+      var match = STALL_STEP.exec(Array.prototype.join.call(args, ' '));
       if (match) {
         steps.count++;
         steps.last = Date.now();
@@ -136,8 +135,17 @@
         steps.number = Number(match[2]);
       }
     } catch (e) {}
-    return nativeLog.apply(console, arguments);
-  };
+  }
+
+  // The engine can print through any of these, so watch each one it might use.
+  ['log', 'info', 'debug', 'warn'].forEach(function (name) {
+    var native = console[name];
+    if (typeof native !== 'function') return;
+    console[name] = function () {
+      recordStep(arguments);
+      return native.apply(console, arguments);
+    };
+  });
 
   var appendChild = Node.prototype.appendChild;
   Node.prototype.appendChild = function (node) {
