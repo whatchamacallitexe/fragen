@@ -1,0 +1,62 @@
+name: Deploy Fragen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: fragen-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Assemble game files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _site/Build
+          base="https://files.crazygames.com/fragen/224"
+          curl -fsSL "$base/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js" -o _site/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js
+          curl -fsSL "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o _site/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js
+          curl -fsSL "$base/Build/94dd788a9a422297e16b42770ede9a4f.wasm.br" -o /tmp/fragen.wasm.br
+          curl -fsSL "$base/Build/9d925cb3a83f24e6325c2c545c2262d2.data.br" -o /tmp/fragen.data.br
+          node - <<'NODE'
+          const fs = require('fs');
+          const zlib = require('zlib');
+          for (const [src, out] of [
+            ['/tmp/fragen.wasm.br', '_site/Build/94dd788a9a422297e16b42770ede9a4f.wasm'],
+            ['/tmp/fragen.data.br', '_site/Build/9d925cb3a83f24e6325c2c545c2262d2.data']
+          ]) {
+            fs.writeFileSync(out, zlib.brotliDecompressSync(fs.readFileSync(src)));
+          }
+          NODE
+          cp index.html _site/index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
