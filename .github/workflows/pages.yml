@@ -29,10 +29,10 @@ jobs:
           set -euo pipefail
           mkdir -p _site/Build _site/StreamingAssets/aa/WebGL
           base="https://files.crazygames.com/fragen/224"
-          curl --compressed -fsSL "$base/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js" -o _site/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js
-          curl -fsSL "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o /tmp/fragen.framework.js.br
-          curl -fsSL "$base/Build/94dd788a9a422297e16b42770ede9a4f.wasm.br" -o /tmp/fragen.wasm.br
-          curl -fsSL "$base/Build/9d925cb3a83f24e6325c2c545c2262d2.data.br" -o /tmp/fragen.data.br
+          curl --compressed -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$base/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js" -o _site/Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$base/Build/f4309c9912d461a9f12b3da028abb1ba.framework.js.br" -o /tmp/fragen.framework.js.br
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$base/Build/94dd788a9a422297e16b42770ede9a4f.wasm.br" -o /tmp/fragen.wasm.br
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$base/Build/9d925cb3a83f24e6325c2c545c2262d2.data.br" -o /tmp/fragen.data.br
           node - <<'NODE'
           const fs = require('fs');
           const zlib = require('zlib');
@@ -52,9 +52,9 @@ jobs:
           set -euo pipefail
           base="https://files.crazygames.com/fragen/224/StreamingAssets/aa"
           out="_site/StreamingAssets/aa"
-          curl --compressed -fsSL "$base/settings.json" -o "$out/settings.json"
-          curl --compressed -fsSL "$base/catalog.bin" -o "$out/catalog.bin"
-          curl --compressed -fsSL "$base/catalog.hash" -o "$out/catalog.hash"
+          for f in settings.json catalog.bin catalog.hash; do
+            curl --compressed -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$base/$f" -o "$out/$f"
+          done
           node - <<'NODE' > /tmp/bundles.txt
           const fs = require('fs');
           const text = fs.readFileSync('_site/StreamingAssets/aa/catalog.bin', 'latin1');
@@ -66,11 +66,14 @@ jobs:
           console.log(names.join('\n'));
           NODE
           export base
-          (cd "$out/WebGL" && xargs -a /tmp/bundles.txt -P 16 -I{} curl -fsSL "$base/WebGL/{}" -o "{}")
+          # Modest concurrency plus retries: the CDN throttles bursty clients.
+          (cd "$out/WebGL" && xargs -a /tmp/bundles.txt -P 6 -I{} \
+            curl -fsSL --retry 6 --retry-delay 3 --retry-all-errors "$base/WebGL/{}" -o "{}")
           expected=$(grep -c . /tmp/bundles.txt)
           actual=$(ls "$out/WebGL" | wc -l | tr -d ' ')
           echo "bundles expected=$expected downloaded=$actual"
           test "$expected" = "$actual"
+          du -sh "$out/WebGL"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
