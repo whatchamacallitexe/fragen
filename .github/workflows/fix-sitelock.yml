@@ -60,15 +60,21 @@ jobs:
               '// points at crazygames.com. Send those requests back to files next to this page instead.\n'
               '(function () {\n'
               "  var FAKE = 'https://www.crazygames.com/game/';\n"
+              "  var base = location.href.split('?')[0].split('#')[0].replace(/[^/]*$/, '');\n"
               '  function fix(value) {\n'
               '    var text = String(value);\n'
-              "    return text.indexOf(FAKE) === 0 ? '/' + text.slice(FAKE.length) : value;\n"
+              '    return text.indexOf(FAKE) === 0 ? base + text.slice(FAKE.length) : value;\n'
               '  }\n'
               '  var nativeFetch = window.fetch;\n'
               '  if (nativeFetch) {\n'
               '    window.fetch = function (input, init) {\n'
               "      if (typeof input === 'string') input = fix(input);\n"
-              "      else if (input && input.url && fix(input.url) !== input.url) input = new Request(fix(input.url), input);\n"
+              '      else if (input && input.url) {\n'
+              '        var target = fix(input.url);\n'
+              '        if (target !== input.url) {\n'
+              '          try { input = new Request(target, input); } catch (e) {}\n'
+              '        }\n'
+              '      }\n'
               '      return nativeFetch.call(this, input, init);\n'
               '    };\n'
               '  }\n'
@@ -82,17 +88,15 @@ jobs:
               '</script>\n'
           )
 
-          addition = ''
-          if 'id="fragen-sitelock-host"' not in html:
-              addition += host_block
-          if 'id="fragen-rewrite"' not in html:
-              addition += rewrite_block
+          # Drop any earlier copy so the newest version always wins, then insert both blocks
+          # immediately before the Unity loader.
+          html = re.sub(r'<script id="fragen-sitelock-host">.*?</script>\n?', '', html, flags=re.S)
+          html = re.sub(r'<script id="fragen-rewrite">.*?</script>\n?', '', html, flags=re.S)
+          loader = re.search(r'<script src="Build/[0-9a-f]+\.loader\.js\?v=[^"]+"></script>', html)
+          if not loader:
+              raise SystemExit('loader script tag not found after cleanup')
 
-          if not addition:
-              print('index.html already patched')
-              raise SystemExit(0)
-
-          html = html[:loader.start()] + addition + html[loader.start():]
+          html = html[:loader.start()] + host_block + rewrite_block + html[loader.start():]
           path.write_text(html)
           print('patched index.html')
           PY
@@ -109,7 +113,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "index.html already patched"
           else
-            git commit -m "Route Unity asset requests back to this host after the SiteLock override"
+            git commit -m "Route Unity asset requests back to this page after the SiteLock override"
             git push
           fi
           sleep 5
