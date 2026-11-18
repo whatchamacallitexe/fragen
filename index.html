@@ -191,15 +191,21 @@
 // points at crazygames.com. Send those requests back to files next to this page instead.
 (function () {
   var FAKE = 'https://www.crazygames.com/game/';
+  var base = location.href.split('?')[0].split('#')[0].replace(/[^/]*$/, '');
   function fix(value) {
     var text = String(value);
-    return text.indexOf(FAKE) === 0 ? '/' + text.slice(FAKE.length) : value;
+    return text.indexOf(FAKE) === 0 ? base + text.slice(FAKE.length) : value;
   }
   var nativeFetch = window.fetch;
   if (nativeFetch) {
     window.fetch = function (input, init) {
       if (typeof input === 'string') input = fix(input);
-      else if (input && input.url && fix(input.url) !== input.url) input = new Request(fix(input.url), input);
+      else if (input && input.url) {
+        var target = fix(input.url);
+        if (target !== input.url) {
+          try { input = new Request(target, input); } catch (e) {}
+        }
+      }
       return nativeFetch.call(this, input, init);
     };
   }
