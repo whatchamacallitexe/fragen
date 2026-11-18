@@ -1,0 +1,82 @@
+name: Fix Fragen startup freeze
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-sitelock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: fragen-sitelock-fix
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add the SiteLock host override to index.html
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path('index.html')
+          html = path.read_text()
+          if 'crazygames.com/game/fragen' in html:
+              print('already patched')
+              raise SystemExit(0)
+
+          override = (
+              '<script>\n'
+              '// CrazySDK SiteLock freezes the game (the startup bar stops at 17/100) unless the page\n'
+              '// looks like it is hosted on an allowed CrazyGames domain. Unity reads\n'
+              '// Application.absoluteURL from document.URL, so report a crazygames.com URL there while\n'
+              '// the real page keeps running on its own host.\n'
+              '(function () {\n'
+              "  var fake = 'https://www.crazygames.com/game/fragen';\n"
+              '  try {\n'
+              "    var d = Object.getOwnPropertyDescriptor(Document.prototype, 'URL');\n"
+              "    Object.defineProperty(Document.prototype, 'URL', { configurable: true, get: function () { return fake; }, set: d && d.set });\n"
+              '  } catch (e) {}\n'
+              '})();\n'
+              '</script>\n'
+          )
+
+          match = re.search(r'<script src="Build/[0-9a-f]+\.loader\.js\?v=[^"]+"></script>', html)
+          if not match:
+              raise SystemExit('loader script tag not found')
+
+          path.write_text(html[:match.start()] + override + html[match.start():])
+          print('patched index.html')
+          PY
+
+      - name: Commit and redeploy Pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "index.html already patched"
+          else
+            git commit -m "Fix Fragen startup freeze by satisfying the CrazySDK SiteLock host check"
+            git push
+          fi
+          sleep 5
+          gh workflow run pages.yml --ref main
+          echo "Pages redeploy requested"
