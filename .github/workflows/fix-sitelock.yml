@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Add the SiteLock host override to index.html
+      - name: Patch index.html
         shell: bash
         run: |
           set -euo pipefail
@@ -34,12 +34,12 @@ jobs:
 
           path = Path('index.html')
           html = path.read_text()
-          if 'crazygames.com/game/fragen' in html:
-              print('already patched')
-              raise SystemExit(0)
+          loader = re.search(r'<script src="Build/[0-9a-f]+\.loader\.js\?v=[^"]+"></script>', html)
+          if not loader:
+              raise SystemExit('loader script tag not found')
 
-          override = (
-              '<script>\n'
+          host_block = (
+              '<script id="fragen-sitelock-host">\n'
               '// CrazySDK SiteLock freezes the game (the startup bar stops at 17/100) unless the page\n'
               '// looks like it is hosted on an allowed CrazyGames domain. Unity reads\n'
               '// Application.absoluteURL from document.URL, so report a crazygames.com URL there while\n'
@@ -54,11 +54,46 @@ jobs:
               '</script>\n'
           )
 
-          match = re.search(r'<script src="Build/[0-9a-f]+\.loader\.js\?v=[^"]+"></script>', html)
-          if not match:
-              raise SystemExit('loader script tag not found')
+          rewrite_block = (
+              '<script id="fragen-rewrite">\n'
+              '// Unity derives StreamingAssets from Application.absoluteURL, which the SiteLock override\n'
+              '// points at crazygames.com. Send those requests back to files next to this page instead.\n'
+              '(function () {\n'
+              "  var FAKE = 'https://www.crazygames.com/game/';\n"
+              '  function fix(value) {\n'
+              '    var text = String(value);\n'
+              "    return text.indexOf(FAKE) === 0 ? '/' + text.slice(FAKE.length) : value;\n"
+              '  }\n'
+              '  var nativeFetch = window.fetch;\n'
+              '  if (nativeFetch) {\n'
+              '    window.fetch = function (input, init) {\n'
+              "      if (typeof input === 'string') input = fix(input);\n"
+              "      else if (input && input.url && fix(input.url) !== input.url) input = new Request(fix(input.url), input);\n"
+              '      return nativeFetch.call(this, input, init);\n'
+              '    };\n'
+              '  }\n'
+              '  var nativeOpen = XMLHttpRequest.prototype.open;\n'
+              '  XMLHttpRequest.prototype.open = function (method, url) {\n'
+              '    var args = Array.prototype.slice.call(arguments);\n'
+              '    args[1] = fix(url);\n'
+              '    return nativeOpen.apply(this, args);\n'
+              '  };\n'
+              '})();\n'
+              '</script>\n'
+          )
 
-          path.write_text(html[:match.start()] + override + html[match.start():])
+          addition = ''
+          if 'id="fragen-sitelock-host"' not in html:
+              addition += host_block
+          if 'id="fragen-rewrite"' not in html:
+              addition += rewrite_block
+
+          if not addition:
+              print('index.html already patched')
+              raise SystemExit(0)
+
+          html = html[:loader.start()] + addition + html[loader.start():]
+          path.write_text(html)
           print('patched index.html')
           PY
 
@@ -74,7 +109,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "index.html already patched"
           else
-            git commit -m "Fix Fragen startup freeze by satisfying the CrazySDK SiteLock host check"
+            git commit -m "Route Unity asset requests back to this host after the SiteLock override"
             git push
           fi
           sleep 5
