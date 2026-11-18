@@ -160,6 +160,19 @@
 })();
 
 </script>
+<script>
+// CrazySDK SiteLock freezes the game (the startup bar stops at 17/100) unless the page
+// looks like it is hosted on an allowed CrazyGames domain. Unity reads
+// Application.absoluteURL from document.URL, so report a crazygames.com URL there while
+// the real page keeps running on its own host.
+(function () {
+  var fake = 'https://www.crazygames.com/game/fragen';
+  try {
+    var d = Object.getOwnPropertyDescriptor(Document.prototype, 'URL');
+    Object.defineProperty(Document.prototype, 'URL', { configurable: true, get: function () { return fake; }, set: d && d.set });
+  } catch (e) {}
+})();
+</script>
 <script src="Build/bece21f8d09fbab3dbbf0faaeec1162c.loader.js?v=20261118a"></script>
 <script>
 (function () {
